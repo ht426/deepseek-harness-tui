@@ -37,19 +37,13 @@
 ### 启动欢迎框
 
 <p align="center">
-  <img src="cover/welcome.png" alt="启动欢迎框" width="80%" />
-</p>
-
-### 对话转录
-
-<p align="center">
-  <img src="cover/cover.png" alt="对话转录" width="80%" />
+  <img src="cover/welcome.png" alt="启动欢迎框" width="100%" />
 </p>
 
 ### 轨迹视图
 
 <p align="center">
-  <img src="cover/trajectory.png" alt="轨迹视图" width="80%" />
+  <img src="cover/trajectory.png" alt="轨迹视图" width="100%" />
 </p>
 
 > 在真实终端中运行 `dsh --profile tui` 查看完整交互效果。
