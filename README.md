@@ -34,36 +34,25 @@
 
 ## 截图
 
-> 在真实终端中运行 `dsh --profile tui` 查看完整效果（封面图即启动欢迎框）。
+### 启动欢迎框
 
-**启动欢迎框**（自适应终端宽度）：
+<p align="center">
+  <img src="cover/welcome.png" alt="启动欢迎框" width="80%" />
+</p>
 
-```
-╭──────────────────────────────────────────────────────╮
-│              ██████╗  ███████╗ ██╗  ██╗              │
-│              ██╔══██╗ ██╔════╝ ██║  ██║              │
-│              ██║  ██║ ███████╗ ███████║              │
-│              ██║  ██║ ╚════██║ ██╔══██║              │
-│              ██████╔╝ ███████║ ██║  ██║              │
-│              ╚═════╝  ╚══════╝ ╚═╝  ╚═╝              │
-│            DeepSeek Harness · terminal UI             │
-│         model · deepseek-official/deepseek-v4-flash   │
-│   /help commands · /model pick model · /resume <id>   │
-│   Enter send · Ctrl+C quit · Ctrl+O detail · ...      │
-╰──────────────────────────────────────────────────────╯
-```
+### 对话转录
 
-**对话转录**：
+<p align="center">
+  <img src="cover/cover.png" alt="对话转录" width="80%" />
+</p>
 
-```
-> list files then write hello.sh
-✻ thinking · list first
-Sure.
-✓ bash ls -la  995ms
-⎿ total 8
-  a.txt
-● wrote hello.sh
-```
+### 轨迹视图
+
+<p align="center">
+  <img src="cover/trajectory.png" alt="轨迹视图" width="80%" />
+</p>
+
+> 在真实终端中运行 `dsh --profile tui` 查看完整交互效果。
 
 ## 安装
 
