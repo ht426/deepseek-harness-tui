@@ -1,0 +1,11 @@
+# dsh-tui bundle patch: the terminal UI surface over dsh-base.
+# One insert mounts the host plugin; it consumes the host seams dsh-base
+# already provides (agents, sessions, sessionQuery, userQuestions, approval,
+# commands, agentDefaultModel, tools) and owns the terminal, ink render, and
+# the interactive agent loop. No launcher change is required: install this
+# bundle into any profile and boot it.
+
+- insert:
+    - id: tui
+      name: 'dsh-tui'
+      inject: [agents, sessions, agentDefaultModel, sessionQuery, userQuestions, commands, tools]

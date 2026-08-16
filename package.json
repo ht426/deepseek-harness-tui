@@ -1,0 +1,79 @@
+{
+  "name": "dsh-tui",
+  "description": "A polished terminal UI for DeepSeek Harness: streaming transcript, tool cards, slash commands, questions, approvals, and session management over the dsh host seams.",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "cli-truncate": "^6.1.1",
+    "ink": "^7.1.1",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "marked": "^18.0.9",
+    "react": "^19.2.8",
+    "string-width": "^8.2.2",
+    "wrap-ansi": "^10.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-cmdline": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-projection": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-query": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-cmdline": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-projection": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-query": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
