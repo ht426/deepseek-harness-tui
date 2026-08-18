@@ -58,7 +58,7 @@ export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.Re
     }
   })
 
-  const placeholder = isCommandLine(value) ? '输入命令（/help 查看）' : '输入消息…'
+  const placeholder = isCommandLine(value) ? 'type a command (see /help)' : 'type a message…'
   return (
     <Box flexDirection="row">
       <Text color="cyan" bold>{'> '}</Text>

@@ -36,7 +36,7 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { render } from 'ink'
 import { App } from './render/app.tsx'
 import { TuiStore } from './store.ts'
-import type { SelectOption } from './store.ts'
+import type { SelectOption, TuiStats } from './store.ts'
 import type { ToolPresenter } from './transcript.ts'
 import type { TuiController } from './controller.ts'
 import { parseTuiArgs, TUI_HELP } from './cmdline.ts'
@@ -213,6 +213,7 @@ export function apply(ctx: Context): void {
     store.setSessionId(agent.id)
     // Replay the durable log (a resume's seed is not re-published).
     store.replay(agent.session.events)
+    pushStats()
     await agent.whenIdle()
     store.setStatus('idle')
   }
@@ -249,10 +250,22 @@ export function apply(ctx: Context): void {
     void teardown()
   }
 
+  /** Push the whole-log stats/context projections into the store for the status bar. */
+  function pushStats(): void {
+    if (agent === undefined) return
+    const values = ctx.sessionProjections.snapshot(agent.session).values as Record<string, unknown>
+    store.setStats({
+      sessionStats: values.sessionStats as TuiStats['sessionStats'],
+      tokenUsage: values.tokenUsage as TuiStats['tokenUsage'],
+      contextPressure: values.contextPressure as TuiStats['contextPressure'],
+    })
+  }
+
   // --- Session event feed --------------------------------------------------
   ctx.on('session/event', (session: { id: string }, event: SessionEvent) => {
     if (agent === undefined || session.id !== agent.id) return
     store.pushEvent(event)
+    pushStats()
     if (event.type === 'turn/start') store.setStatus('running')
     if (event.type === 'turn/end') void agent?.whenIdle().then(() => { store.setStatus('idle') })
   })

@@ -16,6 +16,7 @@ import { Transcript } from './transcript.ts'
 import type { TranscriptNode, ToolPresenter } from './transcript.ts'
 import { TrajectoryFold } from './trajectory.ts'
 import type { Trajectory, TrajectoryRecord } from './trajectory.ts'
+import type { SessionStats, TokenUsage, ContextPressure } from './statsFormat.ts'
 
 export type { TranscriptNode, ToolPresenter } from './transcript.ts'
 export type { Trajectory, TrajectoryRecord, TrajectoryTurn } from './trajectory.ts'
@@ -68,6 +69,13 @@ export interface TrajectoryState {
   showTimeline: boolean
 }
 
+/** Whole-log projections backing the status bar's stats/context lines. */
+export interface TuiStats {
+  sessionStats: SessionStats | undefined
+  tokenUsage: TokenUsage | undefined
+  contextPressure: ContextPressure | undefined
+}
+
 /** Immutable UI snapshot; a new object is minted on every state change. */
 export interface TuiSnapshot {
   status: 'booting' | 'idle' | 'running'
@@ -82,7 +90,10 @@ export interface TuiSnapshot {
   sessions: readonly SessionRecord[]
   notice: string | undefined
   noticeLevel: 'info' | 'error'
+  stats: TuiStats
 }
+
+const EMPTY_STATS: TuiStats = { sessionStats: undefined, tokenUsage: undefined, contextPressure: undefined }
 
 const EMPTY: TuiSnapshot = {
   status: 'booting',
@@ -97,6 +108,7 @@ const EMPTY: TuiSnapshot = {
   sessions: [],
   notice: undefined,
   noticeLevel: 'info',
+  stats: EMPTY_STATS,
 }
 
 type Listener = () => void
@@ -227,6 +239,11 @@ export class TuiStore {
 
   setModel(model: ModelSelection | undefined): void {
     this.commit({ model })
+  }
+
+  /** Refresh the whole-log stats/context projections backing the status bar. */
+  setStats(stats: TuiStats): void {
+    this.commit({ stats })
   }
 
   setSessions(sessions: readonly SessionRecord[]): void {
