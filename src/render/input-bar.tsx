@@ -89,10 +89,23 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
     }
     if (key.return) {
       // A dropdown is open and the typed text isn't already a complete,
-      // exact command name — complete it instead of submitting a raw,
-      // certainly-invalid line (e.g. bare "/" -> "unknown command: /").
-      // A second Enter then actually runs the completed command.
+      // exact command name — completing is needed before this can submit
+      // (a raw partial line like bare "/" is certainly invalid and would
+      // just get "unknown command: /"). If the prefix is unambiguous (one
+      // match), there's nothing to disambiguate, so complete-and-submit
+      // happen together in this same Enter — every command gets the same
+      // one-press experience once its prefix is unique, not just short
+      // ones like "/m". A genuinely ambiguous prefix (multiple matches)
+      // still needs a second Enter, so the user sees what got picked
+      // before it runs.
       if (tabTarget !== undefined && !matches.some(m => m.name === query)) {
+        if (matches.length === 1) {
+          const completedLine = '/' + tabTarget.name + ' '
+          onSubmit(completedLine)
+          setCursor(0)
+          setSelected(0)
+          return
+        }
         completeToTarget(tabTarget)
         return
       }
