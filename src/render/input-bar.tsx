@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react'
 import type { TuiController } from '../controller.ts'
 import type { FileIndexState } from '../store.ts'
 import { mentionQuery, matchFileCandidates } from './file-mention.ts'
+import { lineStartIndex, lineEndIndex, backwardWordBoundary, computeRowCol, moveCursorVertically } from './line-motion.ts'
 
 export interface InputBarProps {
   value: string
@@ -30,10 +31,14 @@ export function isCommandLine(line: string): boolean {
   return line.startsWith('/')
 }
 
-/** Whether the input is mid-typing a slash command (no space yet) and, if so, its query text. */
+/** Whether the input is mid-typing a slash command (no whitespace yet) and, if so, its query text. */
 function commandQuery(value: string): { isCommandMode: boolean; query: string } {
-  const isCommandMode = value.startsWith('/') && !value.includes(' ')
-  return { isCommandMode, query: isCommandMode ? value.slice(1) : '' }
+  const query = value.slice(1)
+  // Any whitespace (not just a literal space) ends command mode -- a
+  // multi-line draft is never mistaken for one just because it starts with
+  // "/" and hasn't hit a space character yet.
+  const isCommandMode = value.startsWith('/') && !/\s/.test(query)
+  return { isCommandMode, query: isCommandMode ? query : '' }
 }
 
 type Command = ReturnType<TuiController['listCommands']>[number]
@@ -43,8 +48,13 @@ function matchSlashCommands(commands: readonly Command[], query: string): Comman
   return commands.filter(c => c.name.startsWith(query))
 }
 
-/** Renders a line with the character at `cursorCol` inverted as a visible block cursor. */
-function renderLineContent(line: string, cursorCol: number): React.ReactNode {
+/**
+ * Renders one visual line, with the character at `cursorCol` inverted as a
+ * visible block cursor -- or plain text when `cursorCol` is `null`, for
+ * every line except the one the cursor is actually on.
+ */
+function renderLineContent(line: string, cursorCol: number | null): React.ReactNode {
+  if (cursorCol === null) return <Text>{line.length > 0 ? line : ' '}</Text>
   const before = line.slice(0, cursorCol)
   const atCursor = line[cursorCol] ?? ' '
   const after = line.slice(cursorCol + 1)
@@ -114,7 +124,40 @@ export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: I
       setMentionDismissed(false)
     }
 
-    if (key.ctrl || key.meta) return // chords belong to the App
+    // Readline-style line editing, owned here (not the blanket ctrl/meta bail
+    // below) since these specific chords are this component's own, not the
+    // App's global ones (Ctrl+O/Ctrl+T).
+    if (key.ctrl && input === 'w') {
+      const start = backwardWordBoundary(value, cursor)
+      onChange(value.slice(0, start) + value.slice(cursor))
+      setCursor(start)
+      return
+    }
+    if (key.ctrl && input === 'k') {
+      onChange(value.slice(0, cursor) + value.slice(lineEndIndex(value, cursor)))
+      return
+    }
+    if (key.ctrl && input === 'u') {
+      const start = lineStartIndex(value, cursor)
+      onChange(value.slice(0, start) + value.slice(cursor))
+      setCursor(start)
+      return
+    }
+    if (key.home || (key.ctrl && input === 'a')) {
+      setCursor(lineStartIndex(value, cursor))
+      return
+    }
+    if (key.end || (key.ctrl && input === 'e')) {
+      setCursor(lineEndIndex(value, cursor))
+      return
+    }
+    // Remaining ctrl/meta chords belong to the App -- except Meta+Return,
+    // which this component owns too (newline insertion, handled below in
+    // the key.return block alongside Shift+Return and the backslash
+    // fallback). Bailing here unconditionally on `key.meta` would swallow
+    // it before that block ever runs, since key.meta is set on the whole
+    // keypress, not specifically "meta but not Return".
+    if ((key.ctrl || key.meta) && !key.return) return
     if (mentionOpen) {
       if (key.escape) {
         setMentionDismissed(true)
@@ -143,6 +186,18 @@ export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: I
       setSelected(s => (s + 1) % matches.length)
       return
     }
+    // Vertical motion within a multi-line draft, once no dropdown claims the
+    // arrow key above. This component has no prompt-history recall, so
+    // there's no up/down fallback to worry about clobbering on a
+    // single-line buffer -- the arrows are simply inert there, same as before.
+    if (key.upArrow && value.includes('\n')) {
+      setCursor(c => moveCursorVertically(value, c, -1))
+      return
+    }
+    if (key.downArrow && value.includes('\n')) {
+      setCursor(c => moveCursorVertically(value, c, 1))
+      return
+    }
     if (tabTarget !== undefined && key.tab) {
       completeToTarget(tabTarget)
       return
@@ -169,6 +224,19 @@ export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: I
         completeToTarget(tabTarget)
         return
       }
+      // A trailing backslash before the cursor is a portable "insert
+      // newline" fallback for terminals that don't report Shift+Enter
+      // distinctly from plain Enter.
+      if (cursor > 0 && value[cursor - 1] === '\\') {
+        onChange(value.slice(0, cursor - 1) + '\n' + value.slice(cursor))
+        // Backslash -> newline is a like-for-like swap, so the offset holds.
+        return
+      }
+      if (key.shift || key.meta) {
+        onChange(value.slice(0, cursor) + '\n' + value.slice(cursor))
+        setCursor(cursor + 1)
+        return
+      }
       onSubmit(value)
       setCursor(0)
       return
@@ -193,9 +261,12 @@ export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: I
       return
     }
     if (input !== '') {
-      const next = value.slice(0, cursor) + input + value.slice(cursor)
+      // Normalizes a multi-line paste's line endings so line-splitting
+      // (rendering, Home/End, kill-line) only ever has to reason about `\n`.
+      const normalized = input.replace(/\r\n?/g, '\n')
+      const next = value.slice(0, cursor) + normalized + value.slice(cursor)
       onChange(next)
-      setCursor(cursor + input.length)
+      setCursor(cursor + normalized.length)
       setSelected(0)
       setMentionSelected(0)
       setMentionDismissed(false)
@@ -204,6 +275,8 @@ export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: I
 
   const placeholder = isCommandLine(value) ? 'type a command (see /help)' : 'type a message…'
   const nameWidth = Math.max(0, ...commands.map(c => c.name.length))
+  const lines = value.split('\n')
+  const { row: cursorRow, col: cursorCol } = computeRowCol(value, cursor)
   return (
     <Box flexDirection="column">
       {matches.length > 0 && (
@@ -227,11 +300,20 @@ export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: I
           ))}
         </Box>
       )}
-      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row">
-        <Text color="cyan" bold>{'> '}</Text>
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
         {value === ''
-          ? <Text dimColor>{placeholder}</Text>
-          : renderLineContent(value, cursor)}
+          ? (
+              <Box flexDirection="row">
+                <Text color="cyan" bold>{'> '}</Text>
+                <Text dimColor>{placeholder}</Text>
+              </Box>
+            )
+          : lines.map((line, i) => (
+              <Box key={i} flexDirection="row">
+                <Text color="cyan" bold>{i === 0 ? '> ' : '  '}</Text>
+                {renderLineContent(line, i === cursorRow ? cursorCol : null)}
+              </Box>
+            ))}
       </Box>
     </Box>
   )
