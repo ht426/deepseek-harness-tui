@@ -25,6 +25,20 @@ export function isCommandLine(line: string): boolean {
   return line.startsWith('/')
 }
 
+/** Renders a line with the character at `cursorCol` inverted as a visible block cursor. */
+function renderLineContent(line: string, cursorCol: number): React.ReactNode {
+  const before = line.slice(0, cursorCol)
+  const atCursor = line[cursorCol] ?? ' '
+  const after = line.slice(cursorCol + 1)
+  return (
+    <Text>
+      {before}
+      <Text inverse>{atCursor}</Text>
+      {after}
+    </Text>
+  )
+}
+
 export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.ReactNode {
   const [cursor, setCursor] = useState(value.length)
 
@@ -64,7 +78,7 @@ export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.Re
       <Text color="cyan" bold>{'> '}</Text>
       {value === ''
         ? <Text dimColor>{placeholder}</Text>
-        : <Text>{value}</Text>}
+        : renderLineContent(value, cursor)}
     </Box>
   )
 }
