@@ -9,3 +9,10 @@
     - id: tui
       name: 'dsh-tui'
       inject: [agents, sessions, agentDefaultModel, sessionQuery, userQuestions, commands, tools]
+    # Whole-log turn/step counts and LLM/TTFT/decode wall times for the status
+    # bar's stats line. Per its own README, this is "mounted only in the
+    # web-app bundle" by default — other assemblies serve no sessionStats key
+    # at all, so the tokenUsage/contextPressure figures show but this group
+    # silently drops out of buildStatsLine() without it.
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'

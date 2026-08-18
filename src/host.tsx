@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -35,11 +36,12 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { render } from 'ink'
 import { App } from './render/app.tsx'
 import { TuiStore } from './store.ts'
-import type { SelectOption } from './store.ts'
+import type { SelectOption, TuiStats } from './store.ts'
 import type { ToolPresenter } from './transcript.ts'
 import type { TuiController } from './controller.ts'
 import { parseTuiArgs, TUI_HELP } from './cmdline.ts'
 import { parseApiKey, parseAddProvider, splitModelArg } from './command-args.ts'
+import { loadFileIndex } from './file-index.ts'
 import type { MarkdownTheme } from './markdown.tsx'
 
 /** The plugin's stable Cordis name. */
@@ -103,9 +105,19 @@ export function apply(ctx: Context): void {
   let quitRequested = false
   let tornDown = false
 
+  // Captured synchronously, before any plugin's async settings wiring can
+  // possibly have settled: dsh-agent-default-model exposes `ctx.agentDefaultModel`
+  // as soon as its constructor returns, but the settings-backed value only
+  // lands later, via `installSettingsSection`'s `ctx.inject(['settings'], ...)`
+  // callback plus the settings-file provider's own async disk read. This value
+  // is therefore guaranteed to be the plugin's hardcoded composition default
+  // (`base`), not the user's saved selection — it exists only so `startAgent`
+  // can detect, by comparison, once the real value has taken over.
+  const bootDefault: ModelSelection = ctx.agentDefaultModel.currentSelection()
+
   let model: ModelSelection = args.model !== undefined
-    ? { provider: ctx.agentDefaultModel.currentSelection().provider, model: args.model }
-    : ctx.agentDefaultModel.currentSelection()
+    ? { provider: bootDefault.provider, model: args.model }
+    : bootDefault
 
   store.setModel(model)
   store.setStatus('booting')
@@ -156,9 +168,34 @@ export function apply(ctx: Context): void {
     installModelSelection(agentCtx, selectionFor(scoped))
   }
 
+  /**
+   * Wait for `ctx.agentDefaultModel.currentSelection()` to move off the
+   * composition's hardcoded base default, so a fresh session doesn't
+   * permanently capture it in place of the user's saved settings selection.
+   * Measured empirically at ~2s (settings-file's async disk read plus its
+   * chokidar watcher setup); polls in short intervals rather than sleeping
+   * the full budget, so a deployment where the settings value genuinely
+   * equals the base default (no customization), or where settings happen to
+   * load fast, isn't penalized with a fixed delay either way.
+   */
+  async function awaitDefaultModel(): Promise<ModelSelection> {
+    const deadline = Date.now() + 3000
+    for (;;) {
+      const current = ctx.agentDefaultModel.currentSelection()
+      if (current.provider !== bootDefault.provider || current.model !== bootDefault.model) return current
+      if (Date.now() >= deadline) return current
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+  }
+
   /** Create or resume one agent and feed its log into the store. */
   async function startAgent(resumeId: string | undefined): Promise<void> {
     store.setStatus('booting')
+    const resolvedDefault = await awaitDefaultModel()
+    model = args.model !== undefined
+      ? { provider: resolvedDefault.provider, model: args.model }
+      : resolvedDefault
+    store.setModel(model)
     if (resumeId !== undefined) {
       agentHandle = await ctx.agents.resume({
         resumeSessionId: SessionId(resumeId),
@@ -177,6 +214,7 @@ export function apply(ctx: Context): void {
     store.setSessionId(agent.id)
     // Replay the durable log (a resume's seed is not re-published).
     store.replay(agent.session.events)
+    pushStats()
     await agent.whenIdle()
     store.setStatus('idle')
   }
@@ -213,10 +251,22 @@ export function apply(ctx: Context): void {
     void teardown()
   }
 
+  /** Push the whole-log stats/context projections into the store for the status bar. */
+  function pushStats(): void {
+    if (agent === undefined) return
+    const values = ctx.sessionProjections.snapshot(agent.session).values as Record<string, unknown>
+    store.setStats({
+      sessionStats: values.sessionStats as TuiStats['sessionStats'],
+      tokenUsage: values.tokenUsage as TuiStats['tokenUsage'],
+      contextPressure: values.contextPressure as TuiStats['contextPressure'],
+    })
+  }
+
   // --- Session event feed --------------------------------------------------
   ctx.on('session/event', (session: { id: string }, event: SessionEvent) => {
     if (agent === undefined || session.id !== agent.id) return
     store.pushEvent(event)
+    pushStats()
     if (event.type === 'turn/start') store.setStatus('running')
     if (event.type === 'turn/end') void agent?.whenIdle().then(() => { store.setStatus('idle') })
   })
@@ -243,6 +293,38 @@ export function apply(ctx: Context): void {
     req.signal?.addEventListener('abort', onAbort, { once: true })
     return pending.finally(() => { req.signal?.removeEventListener('abort', onAbort) })
   })
+
+  // --- Command-picker data caching ------------------------------------------
+  // Every async command picker (today: /model, /effort) fetches through
+  // `ctx.llm`, whose actual per-adapter cost isn't visible from this plugin —
+  // for some adapters it's been observed to be noticeably slow. Provider
+  // catalogs and per-model metadata are effectively static for the life of
+  // this process (they only change if the user edits provider config, which
+  // already requires restarting sessions to take effect elsewhere in this
+  // plugin), so any picker built on `ctx.llm` shares these in-flight-deduping
+  // caches instead of re-fetching on every invocation. A failed fetch is
+  // evicted immediately so a transient error doesn't cache a permanent one.
+  const modelListCache = new Map<string, ReturnType<Context['llm']['listModels']>>()
+  function listModelsCached(providerId: string): ReturnType<Context['llm']['listModels']> {
+    let cached = modelListCache.get(providerId)
+    if (cached === undefined) {
+      cached = ctx.llm.listModels(providerId)
+      cached.catch(() => modelListCache.delete(providerId))
+      modelListCache.set(providerId, cached)
+    }
+    return cached
+  }
+  const modelInfoCache = new Map<string, ReturnType<Context['llm']['resolveModelInfo']>>()
+  function resolveModelInfoCached(providerId: string, modelId: string): ReturnType<Context['llm']['resolveModelInfo']> {
+    const key = `${providerId}/${modelId}`
+    let cached = modelInfoCache.get(key)
+    if (cached === undefined) {
+      cached = ctx.llm.resolveModelInfo(providerId, modelId)
+      cached.catch(() => modelInfoCache.delete(key))
+      modelInfoCache.set(key, cached)
+    }
+    return cached
+  }
 
   // --- Command option providers --------------------------------------------
   // A command whose bare invocation should offer a picker maps to a provider
@@ -281,21 +363,43 @@ export function apply(ctx: Context): void {
     providers.set('model', {
       title: 'model',
       options: async () => {
-        const rows: SelectOption[] = []
-        for (const provider of ctx.llm.listProviders()) {
+        // Each provider's catalog is fetched concurrently rather than one at
+        // a time — sequential awaiting made the picker's open latency scale
+        // with the number of registered providers instead of the slowest one.
+        // Results are cached (see listModelsCached above), so only the first
+        // /model invocation per provider, in the process's lifetime, pays the
+        // real fetch cost.
+        const providers = ctx.llm.listProviders()
+        const perProvider = await Promise.all(providers.map(async (provider): Promise<SelectOption[]> => {
           try {
-            const models = await ctx.llm.listModels(provider.id)
-            for (const m of models) {
-              rows.push({ value: `${provider.id}/${m.id}`, label: `${provider.name}: ${m.name}`, description: m.description })
-            }
+            const models = await listModelsCached(provider.id)
+            return models.map(m => ({ value: `${provider.id}/${m.id}`, label: `${provider.name}: ${m.name}`, description: m.description }))
           } catch {
             // A provider whose catalog fails still lists its peers.
+            return []
           }
-        }
-        return rows
+        }))
+        return perProvider.flat()
       },
       currentValue: () => `${model.provider}/${model.model}`,
       onSelect: (value) => switchModel(value),
+    })
+    // The effort picker: reasoning-effort tiers advertised for the currently
+    // selected model, if the adapter exposes any. Mirrors the model picker's
+    // shape so it reuses the same bare-command-opens-a-menu dispatch.
+    providers.set('effort', {
+      title: 'reasoning effort',
+      options: async () => {
+        try {
+          const info = await resolveModelInfoCached(model.provider, model.model)
+          const efforts = info.reasoning?.efforts ?? []
+          return efforts.map(e => ({ value: e.id, label: e.name, description: e.description }))
+        } catch {
+          return []
+        }
+      },
+      currentValue: () => model.reasoningEffort,
+      onSelect: (value) => switchEffort(value),
     })
     return providers
   }
@@ -324,6 +428,25 @@ export function apply(ctx: Context): void {
       }
     } catch (error) {
       store.setNotice(`/model failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      setTimeout(() => { store.setNotice(undefined) }, 6000)
+    }
+  }
+
+  /** Switch the live agent's reasoning effort in place, keeping provider/model fixed. */
+  async function switchEffort(effort: string): Promise<void> {
+    if (agent === undefined) return
+    try {
+      const next: ModelSelection = { provider: model.provider, model: model.model, reasoningEffort: effort as ReasoningEffortId }
+      selectionFor(agent).current = next
+      model = next
+      store.setModel(next)
+      try {
+        await ctx.agentDefaultModel.saveSelection(next)
+      } catch (error) {
+        ctx.logger.warn(`dsh-tui: effort switched but not saved as default: ${String(error)}`)
+      }
+    } catch (error) {
+      store.setNotice(`/effort failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
       setTimeout(() => { store.setNotice(undefined) }, 6000)
     }
   }
@@ -421,6 +544,12 @@ export function apply(ctx: Context): void {
       return agent === undefined ? [] : ctx.commands.list(agent).map(c => ({
         name: c.name, description: c.description, ...(c.input === undefined ? {} : { input: c.input }),
       }))
+    },
+    ensureFileIndex(): void {
+      const { candidates, loading } = store.getSnapshot().fileIndex
+      if (candidates !== undefined || loading) return
+      store.setFileIndexLoading()
+      void loadFileIndex(process.cwd()).then(loaded => { store.setFileIndex(loaded) })
     },
   }
 
@@ -531,7 +660,7 @@ export function apply(ctx: Context): void {
         kind: 'success',
         text: [
           `session: ${agent.id}`,
-          `model: ${model.provider}/${model.model}`,
+          `model: ${model.provider}/${model.model}${model.reasoningEffort !== undefined ? ` (effort: ${model.reasoningEffort})` : ''}`,
           `tokens (last): ${tokens}`,
           `events: ${agent.session.events.length}`,
           `status: ${agent.status}`,
@@ -565,6 +694,22 @@ export function apply(ctx: Context): void {
       if (target === '') return { kind: 'success', text: `current model: ${model.provider}/${model.model}` }
       const { provider, model: modelId } = splitModelArg(target, model.provider)
       void switchModel(`${provider}/${modelId}`)
+      return { kind: 'success' }
+    },
+  })
+  // /effort is declared as a bare picker (optionProviders above), scoped to
+  // whatever tiers the current model's adapter advertises; an explicit
+  // argument form still resolves here so `/effort <id>` works too.
+  ctx.commands.register({
+    name: 'effort',
+    description: 'show or switch the reasoning effort for the current model',
+    input: { hint: '[effort]' },
+    handler: ({ rawInput }) => {
+      const target = rawInput.trim()
+      if (target === '') {
+        return { kind: 'success', text: `current effort: ${model.reasoningEffort ?? 'default'}` }
+      }
+      void switchEffort(target)
       return { kind: 'success' }
     },
   })

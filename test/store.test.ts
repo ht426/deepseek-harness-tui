@@ -85,4 +85,20 @@ describe('TuiStore', () => {
     expect(store.getSnapshot().nodes).toHaveLength(1)
     expect(store.getSnapshot().trajectory.betweenTurns).toHaveLength(1)
   })
+
+  it('tracks the @-mention file index through loading to settled', () => {
+    const store = new TuiStore()
+    expect(store.getSnapshot().fileIndex).toEqual({ candidates: undefined, loading: false })
+    store.setFileIndexLoading()
+    expect(store.getSnapshot().fileIndex).toEqual({ candidates: undefined, loading: true })
+    store.setFileIndex(['a.ts', 'b.ts'])
+    expect(store.getSnapshot().fileIndex).toEqual({ candidates: ['a.ts', 'b.ts'], loading: false })
+  })
+
+  it('does not reset an already-settled file index back to loading', () => {
+    const store = new TuiStore()
+    store.setFileIndex(['a.ts'])
+    store.setFileIndexLoading()
+    expect(store.getSnapshot().fileIndex).toEqual({ candidates: ['a.ts'], loading: false })
+  })
 })

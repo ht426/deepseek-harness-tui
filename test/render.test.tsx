@@ -19,6 +19,7 @@ const controller: TuiController = {
   refreshSessions: () => {},
   switchSession: () => {},
   listCommands: () => [],
+  ensureFileIndex: () => {},
 }
 
 function userEvent(text: string, seq: number): SessionEvent {

@@ -16,6 +16,7 @@ import { Transcript } from './transcript.ts'
 import type { TranscriptNode, ToolPresenter } from './transcript.ts'
 import { TrajectoryFold } from './trajectory.ts'
 import type { Trajectory, TrajectoryRecord } from './trajectory.ts'
+import type { SessionStats, TokenUsage, ContextPressure } from './statsFormat.ts'
 
 export type { TranscriptNode, ToolPresenter } from './transcript.ts'
 export type { Trajectory, TrajectoryRecord, TrajectoryTurn } from './trajectory.ts'
@@ -68,6 +69,19 @@ export interface TrajectoryState {
   showTimeline: boolean
 }
 
+/** Whole-log projections backing the status bar's stats/context lines. */
+export interface TuiStats {
+  sessionStats: SessionStats | undefined
+  tokenUsage: TokenUsage | undefined
+  contextPressure: ContextPressure | undefined
+}
+
+/** The `@`-mention dropdown's backing file list: not yet requested, loading, or settled. */
+export interface FileIndexState {
+  candidates: readonly string[] | undefined
+  loading: boolean
+}
+
 /** Immutable UI snapshot; a new object is minted on every state change. */
 export interface TuiSnapshot {
   status: 'booting' | 'idle' | 'running'
@@ -82,7 +96,12 @@ export interface TuiSnapshot {
   sessions: readonly SessionRecord[]
   notice: string | undefined
   noticeLevel: 'info' | 'error'
+  stats: TuiStats
+  fileIndex: FileIndexState
 }
+
+const EMPTY_STATS: TuiStats = { sessionStats: undefined, tokenUsage: undefined, contextPressure: undefined }
+const EMPTY_FILE_INDEX: FileIndexState = { candidates: undefined, loading: false }
 
 const EMPTY: TuiSnapshot = {
   status: 'booting',
@@ -97,6 +116,8 @@ const EMPTY: TuiSnapshot = {
   sessions: [],
   notice: undefined,
   noticeLevel: 'info',
+  stats: EMPTY_STATS,
+  fileIndex: EMPTY_FILE_INDEX,
 }
 
 type Listener = () => void
@@ -229,12 +250,28 @@ export class TuiStore {
     this.commit({ model })
   }
 
+  /** Refresh the whole-log stats/context projections backing the status bar. */
+  setStats(stats: TuiStats): void {
+    this.commit({ stats })
+  }
+
   setSessions(sessions: readonly SessionRecord[]): void {
     this.commit({ sessions })
   }
 
   setNotice(notice: string | undefined, level: 'info' | 'error' = 'info'): void {
     this.commit({ notice, noticeLevel: level })
+  }
+
+  /** Mark the `@`-mention file index as loading; a no-op once candidates are already present. */
+  setFileIndexLoading(): void {
+    if (this.snapshot.fileIndex.candidates !== undefined) return
+    this.commit({ fileIndex: { candidates: undefined, loading: true } })
+  }
+
+  /** Settle the `@`-mention file index once `loadFileIndex` resolves. */
+  setFileIndex(candidates: readonly string[]): void {
+    this.commit({ fileIndex: { candidates, loading: false } })
   }
 
   // --- Trajectory view state ----------------------------------------------

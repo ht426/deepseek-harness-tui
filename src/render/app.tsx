@@ -63,11 +63,7 @@ function NodeView({ node, theme, density }: { node: TranscriptNode; theme: Markd
     case 'tool':
       return <ToolCall key={node.key} node={node} folded={density === 'folded'} />
     case 'context':
-      return (
-        <Text key={node.key} color="gray">
-          ⎿ {node.text.split('\n').join('\n  ')}
-        </Text>
-      )
+      return <ContextBlock key={node.key} text={node.text} folded={density === 'folded'} />
     case 'todo':
       return (
         <Box key={node.key} flexDirection="column">
@@ -94,6 +90,27 @@ function NodeView({ node, theme, density }: { node: TranscriptNode; theme: Markd
         </Text>
       )
   }
+}
+
+/**
+ * Collapsed-by-default context-injection line (CLAUDE.md, runtime-context
+ * reminders, the skill catalog, …): folded shows one line, expanded the full
+ * text. These carry `source.kind !== 'user'` in the event log — same shape
+ * as a real user message, just not something the user actually typed — so
+ * without this they render as full, unfolded turns ahead of every real
+ * question in a fresh session, which reads as a wall of unrelated boilerplate.
+ */
+function ContextBlock({ text, folded }: { text: string; folded: boolean }): React.ReactNode {
+  if (folded) {
+    const firstLine = text.split('\n')[0] ?? ''
+    const truncated = firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
+    return <Text color="gray">⎿ context · {truncated}</Text>
+  }
+  return (
+    <Text color="gray">
+      ⎿ {text.split('\n').join('\n  ')}
+    </Text>
+  )
 }
 
 /** Collapsed-by-default thinking line: folded shows one line, expanded the full text. */
@@ -247,7 +264,7 @@ export function App({ store, controller, theme, banner }: AppProps): React.React
         ? <SelectModal store={store} select={snapshot.modal.select} />
         : null}
       {!inTrajectory && snapshot.modal === undefined
-        ? <InputBar value={input} onChange={setInput} onSubmit={(line) => { setInput(''); controller.submit(line) }} controller={controller} />
+        ? <InputBar value={input} onChange={setInput} onSubmit={(line) => { setInput(''); controller.submit(line) }} controller={controller} fileIndex={snapshot.fileIndex} />
         : null}
       <StatusBar snapshot={snapshot} density={density} />
     </Box>
