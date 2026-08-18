@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
@@ -330,18 +330,34 @@ export function apply(ctx: Context): void {
     providers.set('model', {
       title: 'model',
       options: async () => {
-        const rows: SelectOption[] = []
-        for (const provider of ctx.llm.listProviders()) {
+        // Each provider's catalog is fetched concurrently rather than one at
+        // a time — sequential awaiting made the picker's open latency scale
+        // with the number of registered providers instead of the slowest one.
+        //
+        // TEMP diagnostic instrumentation (revert once /model latency is
+        // root-caused) — logs how long each provider's listModels() call
+        // actually takes, since that's the one thing this dev sandbox's
+        // small local catalog can't reproduce.
+        const timingLogPath = join(homedir(), '.dsh', 'model-picker-timing.log')
+        const t0 = performance.now()
+        const providers = ctx.llm.listProviders()
+        const perProvider = await Promise.all(providers.map(async (provider): Promise<SelectOption[]> => {
+          const tStart = performance.now()
           try {
             const models = await ctx.llm.listModels(provider.id)
-            for (const m of models) {
-              rows.push({ value: `${provider.id}/${m.id}`, label: `${provider.name}: ${m.name}`, description: m.description })
-            }
-          } catch {
+            const ms = (performance.now() - tStart).toFixed(1)
+            appendFileSync(timingLogPath, `${new Date().toISOString()} provider=${provider.id} models=${models.length} ms=${ms}\n`)
+            return models.map(m => ({ value: `${provider.id}/${m.id}`, label: `${provider.name}: ${m.name}`, description: m.description }))
+          } catch (error) {
+            const ms = (performance.now() - tStart).toFixed(1)
+            appendFileSync(timingLogPath, `${new Date().toISOString()} provider=${provider.id} FAILED ms=${ms} error=${String(error)}\n`)
             // A provider whose catalog fails still lists its peers.
+            return []
           }
-        }
-        return rows
+        }))
+        const totalMs = (performance.now() - t0).toFixed(1)
+        appendFileSync(timingLogPath, `${new Date().toISOString()} TOTAL providers=${providers.length} rows=${perProvider.flat().length} ms=${totalMs}\n\n`)
+        return perProvider.flat()
       },
       currentValue: () => `${model.provider}/${model.model}`,
       onSelect: (value) => switchModel(value),
