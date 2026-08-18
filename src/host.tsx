@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
@@ -293,6 +293,38 @@ export function apply(ctx: Context): void {
     return pending.finally(() => { req.signal?.removeEventListener('abort', onAbort) })
   })
 
+  // --- Command-picker data caching ------------------------------------------
+  // Every async command picker (today: /model, /effort) fetches through
+  // `ctx.llm`, whose actual per-adapter cost isn't visible from this plugin —
+  // for some adapters it's been observed to be noticeably slow. Provider
+  // catalogs and per-model metadata are effectively static for the life of
+  // this process (they only change if the user edits provider config, which
+  // already requires restarting sessions to take effect elsewhere in this
+  // plugin), so any picker built on `ctx.llm` shares these in-flight-deduping
+  // caches instead of re-fetching on every invocation. A failed fetch is
+  // evicted immediately so a transient error doesn't cache a permanent one.
+  const modelListCache = new Map<string, ReturnType<Context['llm']['listModels']>>()
+  function listModelsCached(providerId: string): ReturnType<Context['llm']['listModels']> {
+    let cached = modelListCache.get(providerId)
+    if (cached === undefined) {
+      cached = ctx.llm.listModels(providerId)
+      cached.catch(() => modelListCache.delete(providerId))
+      modelListCache.set(providerId, cached)
+    }
+    return cached
+  }
+  const modelInfoCache = new Map<string, ReturnType<Context['llm']['resolveModelInfo']>>()
+  function resolveModelInfoCached(providerId: string, modelId: string): ReturnType<Context['llm']['resolveModelInfo']> {
+    const key = `${providerId}/${modelId}`
+    let cached = modelInfoCache.get(key)
+    if (cached === undefined) {
+      cached = ctx.llm.resolveModelInfo(providerId, modelId)
+      cached.catch(() => modelInfoCache.delete(key))
+      modelInfoCache.set(key, cached)
+    }
+    return cached
+  }
+
   // --- Command option providers --------------------------------------------
   // A command whose bare invocation should offer a picker maps to a provider
   // that yields a SelectOption list (sync from projections, or async from the
@@ -333,30 +365,19 @@ export function apply(ctx: Context): void {
         // Each provider's catalog is fetched concurrently rather than one at
         // a time — sequential awaiting made the picker's open latency scale
         // with the number of registered providers instead of the slowest one.
-        //
-        // TEMP diagnostic instrumentation (revert once /model latency is
-        // root-caused) — logs how long each provider's listModels() call
-        // actually takes, since that's the one thing this dev sandbox's
-        // small local catalog can't reproduce.
-        const timingLogPath = join(homedir(), '.dsh', 'model-picker-timing.log')
-        const t0 = performance.now()
+        // Results are cached (see listModelsCached above), so only the first
+        // /model invocation per provider, in the process's lifetime, pays the
+        // real fetch cost.
         const providers = ctx.llm.listProviders()
         const perProvider = await Promise.all(providers.map(async (provider): Promise<SelectOption[]> => {
-          const tStart = performance.now()
           try {
-            const models = await ctx.llm.listModels(provider.id)
-            const ms = (performance.now() - tStart).toFixed(1)
-            appendFileSync(timingLogPath, `${new Date().toISOString()} provider=${provider.id} models=${models.length} ms=${ms}\n`)
+            const models = await listModelsCached(provider.id)
             return models.map(m => ({ value: `${provider.id}/${m.id}`, label: `${provider.name}: ${m.name}`, description: m.description }))
-          } catch (error) {
-            const ms = (performance.now() - tStart).toFixed(1)
-            appendFileSync(timingLogPath, `${new Date().toISOString()} provider=${provider.id} FAILED ms=${ms} error=${String(error)}\n`)
+          } catch {
             // A provider whose catalog fails still lists its peers.
             return []
           }
         }))
-        const totalMs = (performance.now() - t0).toFixed(1)
-        appendFileSync(timingLogPath, `${new Date().toISOString()} TOTAL providers=${providers.length} rows=${perProvider.flat().length} ms=${totalMs}\n\n`)
         return perProvider.flat()
       },
       currentValue: () => `${model.provider}/${model.model}`,
@@ -369,7 +390,7 @@ export function apply(ctx: Context): void {
       title: 'reasoning effort',
       options: async () => {
         try {
-          const info = await ctx.llm.resolveModelInfo(model.provider, model.model)
+          const info = await resolveModelInfoCached(model.provider, model.model)
           const efforts = info.reasoning?.efforts ?? []
           return efforts.map(e => ({ value: e.id, label: e.name, description: e.description }))
         } catch {
