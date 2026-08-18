@@ -18,7 +18,9 @@ export function StatusBar({ snapshot, density }: { snapshot: TuiSnapshot; densit
   const lastUsage = last !== undefined && last.kind === 'assistant' ? last.usage : undefined
   const running = snapshot.status === 'running'
   const statusText = snapshot.status === 'booting' ? 'booting' : running ? '⠋ working' : '✓ idle'
-  const model = snapshot.model !== undefined ? `${snapshot.model.provider}/${snapshot.model.model}` : '—'
+  const model = snapshot.model !== undefined
+    ? `${snapshot.model.provider}/${snapshot.model.model}${snapshot.model.reasoningEffort !== undefined ? ` · ${snapshot.model.reasoningEffort}` : ''}`
+    : '—'
   const session = snapshot.sessionId !== undefined ? snapshot.sessionId.slice(-12) : 'new'
   const parts: string[] = [model, session]
 

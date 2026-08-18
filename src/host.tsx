@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -332,6 +333,23 @@ export function apply(ctx: Context): void {
       currentValue: () => `${model.provider}/${model.model}`,
       onSelect: (value) => switchModel(value),
     })
+    // The effort picker: reasoning-effort tiers advertised for the currently
+    // selected model, if the adapter exposes any. Mirrors the model picker's
+    // shape so it reuses the same bare-command-opens-a-menu dispatch.
+    providers.set('effort', {
+      title: 'reasoning effort',
+      options: async () => {
+        try {
+          const info = await ctx.llm.resolveModelInfo(model.provider, model.model)
+          const efforts = info.reasoning?.efforts ?? []
+          return efforts.map(e => ({ value: e.id, label: e.name, description: e.description }))
+        } catch {
+          return []
+        }
+      },
+      currentValue: () => model.reasoningEffort,
+      onSelect: (value) => switchEffort(value),
+    })
     return providers
   }
 
@@ -359,6 +377,25 @@ export function apply(ctx: Context): void {
       }
     } catch (error) {
       store.setNotice(`/model failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      setTimeout(() => { store.setNotice(undefined) }, 6000)
+    }
+  }
+
+  /** Switch the live agent's reasoning effort in place, keeping provider/model fixed. */
+  async function switchEffort(effort: string): Promise<void> {
+    if (agent === undefined) return
+    try {
+      const next: ModelSelection = { provider: model.provider, model: model.model, reasoningEffort: effort as ReasoningEffortId }
+      selectionFor(agent).current = next
+      model = next
+      store.setModel(next)
+      try {
+        await ctx.agentDefaultModel.saveSelection(next)
+      } catch (error) {
+        ctx.logger.warn(`dsh-tui: effort switched but not saved as default: ${String(error)}`)
+      }
+    } catch (error) {
+      store.setNotice(`/effort failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
       setTimeout(() => { store.setNotice(undefined) }, 6000)
     }
   }
@@ -566,7 +603,7 @@ export function apply(ctx: Context): void {
         kind: 'success',
         text: [
           `session: ${agent.id}`,
-          `model: ${model.provider}/${model.model}`,
+          `model: ${model.provider}/${model.model}${model.reasoningEffort !== undefined ? ` (effort: ${model.reasoningEffort})` : ''}`,
           `tokens (last): ${tokens}`,
           `events: ${agent.session.events.length}`,
           `status: ${agent.status}`,
@@ -600,6 +637,22 @@ export function apply(ctx: Context): void {
       if (target === '') return { kind: 'success', text: `current model: ${model.provider}/${model.model}` }
       const { provider, model: modelId } = splitModelArg(target, model.provider)
       void switchModel(`${provider}/${modelId}`)
+      return { kind: 'success' }
+    },
+  })
+  // /effort is declared as a bare picker (optionProviders above), scoped to
+  // whatever tiers the current model's adapter advertises; an explicit
+  // argument form still resolves here so `/effort <id>` works too.
+  ctx.commands.register({
+    name: 'effort',
+    description: 'show or switch the reasoning effort for the current model',
+    input: { hint: '[effort]' },
+    handler: ({ rawInput }) => {
+      const target = rawInput.trim()
+      if (target === '') {
+        return { kind: 'success', text: `current effort: ${model.reasoningEffort ?? 'default'}` }
+      }
+      void switchEffort(target)
       return { kind: 'success' }
     },
   })
