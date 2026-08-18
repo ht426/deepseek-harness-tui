@@ -76,6 +76,12 @@ export interface TuiStats {
   contextPressure: ContextPressure | undefined
 }
 
+/** The `@`-mention dropdown's backing file list: not yet requested, loading, or settled. */
+export interface FileIndexState {
+  candidates: readonly string[] | undefined
+  loading: boolean
+}
+
 /** Immutable UI snapshot; a new object is minted on every state change. */
 export interface TuiSnapshot {
   status: 'booting' | 'idle' | 'running'
@@ -91,9 +97,11 @@ export interface TuiSnapshot {
   notice: string | undefined
   noticeLevel: 'info' | 'error'
   stats: TuiStats
+  fileIndex: FileIndexState
 }
 
 const EMPTY_STATS: TuiStats = { sessionStats: undefined, tokenUsage: undefined, contextPressure: undefined }
+const EMPTY_FILE_INDEX: FileIndexState = { candidates: undefined, loading: false }
 
 const EMPTY: TuiSnapshot = {
   status: 'booting',
@@ -109,6 +117,7 @@ const EMPTY: TuiSnapshot = {
   notice: undefined,
   noticeLevel: 'info',
   stats: EMPTY_STATS,
+  fileIndex: EMPTY_FILE_INDEX,
 }
 
 type Listener = () => void
@@ -252,6 +261,17 @@ export class TuiStore {
 
   setNotice(notice: string | undefined, level: 'info' | 'error' = 'info'): void {
     this.commit({ notice, noticeLevel: level })
+  }
+
+  /** Mark the `@`-mention file index as loading; a no-op once candidates are already present. */
+  setFileIndexLoading(): void {
+    if (this.snapshot.fileIndex.candidates !== undefined) return
+    this.commit({ fileIndex: { candidates: undefined, loading: true } })
+  }
+
+  /** Settle the `@`-mention file index once `loadFileIndex` resolves. */
+  setFileIndex(candidates: readonly string[]): void {
+    this.commit({ fileIndex: { candidates, loading: false } })
   }
 
   // --- Trajectory view state ----------------------------------------------

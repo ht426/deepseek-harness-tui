@@ -33,4 +33,6 @@ export interface TuiController {
   switchSession(id: string): void
   /** List the slash commands available for the current agent. */
   listCommands(): readonly { name: string; description: string; input?: { hint: string } }[]
+  /** Start loading the `@`-mention file index if it hasn't been already (idempotent). */
+  ensureFileIndex(): void
 }

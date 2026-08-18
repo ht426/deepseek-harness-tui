@@ -1,6 +1,8 @@
 /**
  * Input bar: the `>` prompt. A slash-leading line dispatches as a command;
- * anything else is a free-text prompt.
+ * anything else is a free-text prompt. A `@`-mention typed anywhere in a
+ * free-text line (mid-sentence, not just at the start) opens a file-picker
+ * dropdown backed by the host's lazily-loaded repo file index.
  *
  * Custom input (not ink-text-input) so modifier chords (Ctrl+O, Ctrl+T, Esc)
  * can be consumed here instead of leaking into the input value. The App owns
@@ -10,14 +12,17 @@
 
 import { Box, Text } from 'ink'
 import { useInput } from 'ink'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { TuiController } from '../controller.ts'
+import type { FileIndexState } from '../store.ts'
+import { mentionQuery, matchFileCandidates } from './file-mention.ts'
 
 export interface InputBarProps {
   value: string
   onChange: (value: string) => void
   onSubmit: (line: string) => void
   controller: TuiController
+  fileIndex: FileIndexState
 }
 
 /** Whether a line is a slash command. */
@@ -52,9 +57,18 @@ function renderLineContent(line: string, cursorCol: number): React.ReactNode {
   )
 }
 
-export function InputBar({ value, onChange, onSubmit, controller }: InputBarProps): React.ReactNode {
+export function InputBar({ value, onChange, onSubmit, controller, fileIndex }: InputBarProps): React.ReactNode {
   const [cursor, setCursor] = useState(value.length)
   const [selected, setSelected] = useState(0)
+  const [mentionSelected, setMentionSelected] = useState(0)
+  // Esc dismisses the dropdown for the current `@…` token without touching
+  // the buffer; typing further (changing the query) reopens it — reset
+  // alongside `selected`/`mentionSelected` in the text-change branches below,
+  // not via a useEffect keyed on the derived query: the real CLI can deliver
+  // several keystrokes in one batch before a render happens in between, and
+  // an effect firing on a later, unrelated render can silently stomp a
+  // selection (or a dismissal) that already applied correctly this tick.
+  const [mentionDismissed, setMentionDismissed] = useState(false)
 
   const commands = controller.listCommands()
   const { isCommandMode, query } = commandQuery(value)
@@ -65,6 +79,18 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
   // of pointing past the end of the freshly-filtered list.
   const selectedInRange = matches.length === 0 ? 0 : Math.min(selected, matches.length - 1)
 
+  // `@`-mention mode never overlaps command mode: isCommandMode requires the
+  // whole value to have no whitespace, so a later `@` only opens once a space
+  // has ended the slash command (or there was never a leading `/` at all).
+  const mention = isCommandMode ? { isMentionMode: false, query: '', start: -1 } : mentionQuery(value, cursor)
+  const mentionOpen = mention.isMentionMode && !mentionDismissed
+  const mentionMatches = mentionOpen ? matchFileCandidates(fileIndex.candidates ?? [], mention.query) : []
+  const mentionSelectedInRange = mentionMatches.length === 0 ? 0 : Math.min(mentionSelected, mentionMatches.length - 1)
+
+  useEffect(() => {
+    if (mention.isMentionMode) controller.ensureFileIndex()
+  }, [mention.isMentionMode, controller])
+
   useInput((input, key) => {
     const tabTarget = matches[selectedInRange]
     const completeToTarget = (target: Command): void => {
@@ -73,8 +99,42 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
       setCursor(completed.length)
       setSelected(0)
     }
+    const mentionTarget = mentionMatches[mentionSelectedInRange]
+    const completeMention = (path: string): void => {
+      // Splices just the query span (after the `@`), preserving any text
+      // before the `@` and after the query — a mention can open mid-sentence,
+      // unlike the slash-command dropdown which only ever spans the whole line.
+      const before = value.slice(0, mention.start + 1)
+      const after = value.slice(mention.start + 1 + mention.query.length)
+      const inserted = path + ' '
+      const next = before + inserted + after
+      onChange(next)
+      setCursor((before + inserted).length)
+      setMentionSelected(0)
+      setMentionDismissed(false)
+    }
 
     if (key.ctrl || key.meta) return // chords belong to the App
+    if (mentionOpen) {
+      if (key.escape) {
+        setMentionDismissed(true)
+        return
+      }
+      if (mentionTarget !== undefined) {
+        if (key.upArrow) {
+          setMentionSelected((mentionSelectedInRange - 1 + mentionMatches.length) % mentionMatches.length)
+          return
+        }
+        if (key.downArrow) {
+          setMentionSelected((mentionSelectedInRange + 1) % mentionMatches.length)
+          return
+        }
+        if (key.tab || key.return) {
+          completeMention(mentionTarget)
+          return
+        }
+      }
+    }
     if (matches.length > 0 && key.upArrow) {
       setSelected(s => (s - 1 + matches.length) % matches.length)
       return
@@ -119,6 +179,8 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
         onChange(next)
         setCursor(cursor - 1)
         setSelected(0)
+        setMentionSelected(0)
+        setMentionDismissed(false)
       }
       return
     }
@@ -135,6 +197,8 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
       onChange(next)
       setCursor(cursor + input.length)
       setSelected(0)
+      setMentionSelected(0)
+      setMentionDismissed(false)
     }
   })
 
@@ -148,6 +212,18 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
             <Text key={c.name} inverse={i === selectedInRange}>
               {('/' + c.name).padEnd(nameWidth + 2)} {c.description}
             </Text>
+          ))}
+        </Box>
+      )}
+      {mentionOpen && fileIndex.candidates === undefined && (
+        <Box paddingX={1}>
+          <Text dimColor>loading files…</Text>
+        </Box>
+      )}
+      {mentionOpen && fileIndex.candidates !== undefined && mentionMatches.length > 0 && (
+        <Box flexDirection="column" paddingX={1}>
+          {mentionMatches.map((path, i) => (
+            <Text key={path} inverse={i === mentionSelectedInRange}>{path}</Text>
           ))}
         </Box>
       )}

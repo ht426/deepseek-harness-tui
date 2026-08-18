@@ -41,6 +41,7 @@ import type { ToolPresenter } from './transcript.ts'
 import type { TuiController } from './controller.ts'
 import { parseTuiArgs, TUI_HELP } from './cmdline.ts'
 import { parseApiKey, parseAddProvider, splitModelArg } from './command-args.ts'
+import { loadFileIndex } from './file-index.ts'
 import type { MarkdownTheme } from './markdown.tsx'
 
 /** The plugin's stable Cordis name. */
@@ -543,6 +544,12 @@ export function apply(ctx: Context): void {
       return agent === undefined ? [] : ctx.commands.list(agent).map(c => ({
         name: c.name, description: c.description, ...(c.input === undefined ? {} : { input: c.input }),
       }))
+    },
+    ensureFileIndex(): void {
+      const { candidates, loading } = store.getSnapshot().fileIndex
+      if (candidates !== undefined || loading) return
+      store.setFileIndexLoading()
+      void loadFileIndex(process.cwd()).then(loaded => { store.setFileIndex(loaded) })
     },
   }
 

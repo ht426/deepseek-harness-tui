@@ -264,7 +264,7 @@ export function App({ store, controller, theme, banner }: AppProps): React.React
         ? <SelectModal store={store} select={snapshot.modal.select} />
         : null}
       {!inTrajectory && snapshot.modal === undefined
-        ? <InputBar value={input} onChange={setInput} onSubmit={(line) => { setInput(''); controller.submit(line) }} controller={controller} />
+        ? <InputBar value={input} onChange={setInput} onSubmit={(line) => { setInput(''); controller.submit(line) }} controller={controller} fileIndex={snapshot.fileIndex} />
         : null}
       <StatusBar snapshot={snapshot} density={density} />
     </Box>
