@@ -60,7 +60,7 @@ export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.Re
 
   const placeholder = isCommandLine(value) ? 'type a command (see /help)' : 'type a message…'
   return (
-    <Box flexDirection="row">
+    <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row">
       <Text color="cyan" bold>{'> '}</Text>
       {value === ''
         ? <Text dimColor>{placeholder}</Text>
