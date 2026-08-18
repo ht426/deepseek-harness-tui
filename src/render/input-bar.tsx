@@ -66,6 +66,14 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
   const selectedInRange = matches.length === 0 ? 0 : Math.min(selected, matches.length - 1)
 
   useInput((input, key) => {
+    const tabTarget = matches[selectedInRange]
+    const completeToTarget = (target: Command): void => {
+      const completed = '/' + target.name + ' '
+      onChange(completed)
+      setCursor(completed.length)
+      setSelected(0)
+    }
+
     if (key.ctrl || key.meta) return // chords belong to the App
     if (matches.length > 0 && key.upArrow) {
       setSelected(s => (s - 1 + matches.length) % matches.length)
@@ -75,15 +83,19 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
       setSelected(s => (s + 1) % matches.length)
       return
     }
-    const tabTarget = matches[selectedInRange]
     if (tabTarget !== undefined && key.tab) {
-      const completed = '/' + tabTarget.name + ' '
-      onChange(completed)
-      setCursor(completed.length)
-      setSelected(0)
+      completeToTarget(tabTarget)
       return
     }
     if (key.return) {
+      // A dropdown is open and the typed text isn't already a complete,
+      // exact command name — complete it instead of submitting a raw,
+      // certainly-invalid line (e.g. bare "/" -> "unknown command: /").
+      // A second Enter then actually runs the completed command.
+      if (tabTarget !== undefined && !matches.some(m => m.name === query)) {
+        completeToTarget(tabTarget)
+        return
+      }
       onSubmit(value)
       setCursor(0)
       return
