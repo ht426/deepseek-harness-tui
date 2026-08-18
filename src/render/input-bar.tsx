@@ -75,6 +75,14 @@ export function InputBar({ value, onChange, onSubmit, controller }: InputBarProp
       setSelected(s => (s + 1) % matches.length)
       return
     }
+    const tabTarget = matches[selectedInRange]
+    if (tabTarget !== undefined && key.tab) {
+      const completed = '/' + tabTarget.name + ' '
+      onChange(completed)
+      setCursor(completed.length)
+      setSelected(0)
+      return
+    }
     if (key.return) {
       onSubmit(value)
       setCursor(0)
