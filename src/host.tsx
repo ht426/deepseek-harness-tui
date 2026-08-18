@@ -103,9 +103,19 @@ export function apply(ctx: Context): void {
   let quitRequested = false
   let tornDown = false
 
+  // Captured synchronously, before any plugin's async settings wiring can
+  // possibly have settled: dsh-agent-default-model exposes `ctx.agentDefaultModel`
+  // as soon as its constructor returns, but the settings-backed value only
+  // lands later, via `installSettingsSection`'s `ctx.inject(['settings'], ...)`
+  // callback plus the settings-file provider's own async disk read. This value
+  // is therefore guaranteed to be the plugin's hardcoded composition default
+  // (`base`), not the user's saved selection — it exists only so `startAgent`
+  // can detect, by comparison, once the real value has taken over.
+  const bootDefault: ModelSelection = ctx.agentDefaultModel.currentSelection()
+
   let model: ModelSelection = args.model !== undefined
-    ? { provider: ctx.agentDefaultModel.currentSelection().provider, model: args.model }
-    : ctx.agentDefaultModel.currentSelection()
+    ? { provider: bootDefault.provider, model: args.model }
+    : bootDefault
 
   store.setModel(model)
   store.setStatus('booting')
@@ -156,9 +166,34 @@ export function apply(ctx: Context): void {
     installModelSelection(agentCtx, selectionFor(scoped))
   }
 
+  /**
+   * Wait for `ctx.agentDefaultModel.currentSelection()` to move off the
+   * composition's hardcoded base default, so a fresh session doesn't
+   * permanently capture it in place of the user's saved settings selection.
+   * Measured empirically at ~2s (settings-file's async disk read plus its
+   * chokidar watcher setup); polls in short intervals rather than sleeping
+   * the full budget, so a deployment where the settings value genuinely
+   * equals the base default (no customization), or where settings happen to
+   * load fast, isn't penalized with a fixed delay either way.
+   */
+  async function awaitDefaultModel(): Promise<ModelSelection> {
+    const deadline = Date.now() + 3000
+    for (;;) {
+      const current = ctx.agentDefaultModel.currentSelection()
+      if (current.provider !== bootDefault.provider || current.model !== bootDefault.model) return current
+      if (Date.now() >= deadline) return current
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+  }
+
   /** Create or resume one agent and feed its log into the store. */
   async function startAgent(resumeId: string | undefined): Promise<void> {
     store.setStatus('booting')
+    const resolvedDefault = await awaitDefaultModel()
+    model = args.model !== undefined
+      ? { provider: resolvedDefault.provider, model: args.model }
+      : resolvedDefault
+    store.setModel(model)
     if (resumeId !== undefined) {
       agentHandle = await ctx.agents.resume({
         resumeSessionId: SessionId(resumeId),

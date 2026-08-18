@@ -117,8 +117,16 @@ describe('host apply (full path)', () => {
 
   it('executes /status and /rename handlers', async () => {
     const { ctx, handlers } = fakeContext()
-    apply(ctx)
-    await new Promise(resolve => setTimeout(resolve, 0))
+    // This fixture's currentSelection() is a constant, so awaitDefaultModel's
+    // change-detection poll never resolves early; advance virtual time past
+    // its bounded deadline instead of waiting on the real clock.
+    vi.useFakeTimers()
+    try {
+      apply(ctx)
+      await vi.advanceTimersByTimeAsync(3000)
+    } finally {
+      vi.useRealTimers()
+    }
     // /status reports the live session without throwing.
     const statusHandler = handlers.get('status')
     expect(statusHandler).toBeDefined()
