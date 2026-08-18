@@ -25,6 +25,19 @@ export function isCommandLine(line: string): boolean {
   return line.startsWith('/')
 }
 
+/** Whether the input is mid-typing a slash command (no space yet) and, if so, its query text. */
+function commandQuery(value: string): { isCommandMode: boolean; query: string } {
+  const isCommandMode = value.startsWith('/') && !value.includes(' ')
+  return { isCommandMode, query: isCommandMode ? value.slice(1) : '' }
+}
+
+type Command = ReturnType<TuiController['listCommands']>[number]
+
+/** Slash commands whose name starts with `query`, prefix-filtered as the user types. */
+function matchSlashCommands(commands: readonly Command[], query: string): Command[] {
+  return commands.filter(c => c.name.startsWith(query))
+}
+
 /** Renders a line with the character at `cursorCol` inverted as a visible block cursor. */
 function renderLineContent(line: string, cursorCol: number): React.ReactNode {
   const before = line.slice(0, cursorCol)
@@ -39,11 +52,29 @@ function renderLineContent(line: string, cursorCol: number): React.ReactNode {
   )
 }
 
-export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.ReactNode {
+export function InputBar({ value, onChange, onSubmit, controller }: InputBarProps): React.ReactNode {
   const [cursor, setCursor] = useState(value.length)
+  const [selected, setSelected] = useState(0)
+
+  const commands = controller.listCommands()
+  const { isCommandMode, query } = commandQuery(value)
+  const matches = isCommandMode ? matchSlashCommands(commands, query) : []
+  // Defensive clamp: an arrow-key press processed in the same input batch as a
+  // still-pending text change can compute `selected` against a stale, wider
+  // match list. Clamping at render time keeps the highlight in range instead
+  // of pointing past the end of the freshly-filtered list.
+  const selectedInRange = matches.length === 0 ? 0 : Math.min(selected, matches.length - 1)
 
   useInput((input, key) => {
     if (key.ctrl || key.meta) return // chords belong to the App
+    if (matches.length > 0 && key.upArrow) {
+      setSelected(s => (s - 1 + matches.length) % matches.length)
+      return
+    }
+    if (matches.length > 0 && key.downArrow) {
+      setSelected(s => (s + 1) % matches.length)
+      return
+    }
     if (key.return) {
       onSubmit(value)
       setCursor(0)
@@ -54,6 +85,7 @@ export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.Re
         const next = value.slice(0, cursor - 1) + value.slice(cursor)
         onChange(next)
         setCursor(cursor - 1)
+        setSelected(0)
       }
       return
     }
@@ -69,16 +101,29 @@ export function InputBar({ value, onChange, onSubmit }: InputBarProps): React.Re
       const next = value.slice(0, cursor) + input + value.slice(cursor)
       onChange(next)
       setCursor(cursor + input.length)
+      setSelected(0)
     }
   })
 
   const placeholder = isCommandLine(value) ? 'type a command (see /help)' : 'type a message…'
+  const nameWidth = Math.max(0, ...commands.map(c => c.name.length))
   return (
-    <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row">
-      <Text color="cyan" bold>{'> '}</Text>
-      {value === ''
-        ? <Text dimColor>{placeholder}</Text>
-        : renderLineContent(value, cursor)}
+    <Box flexDirection="column">
+      {matches.length > 0 && (
+        <Box flexDirection="column" paddingX={1}>
+          {matches.map((c, i) => (
+            <Text key={c.name} inverse={i === selectedInRange}>
+              {('/' + c.name).padEnd(nameWidth + 2)} {c.description}
+            </Text>
+          ))}
+        </Box>
+      )}
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row">
+        <Text color="cyan" bold>{'> '}</Text>
+        {value === ''
+          ? <Text dimColor>{placeholder}</Text>
+          : renderLineContent(value, cursor)}
+      </Box>
     </Box>
   )
 }
